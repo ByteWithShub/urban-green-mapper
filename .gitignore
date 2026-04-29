@@ -1,0 +1,42 @@
+# =========================
+# PYTHON / BACKEND
+# =========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+.env
+.venv/
+venv/
+
+
+# Node
+node_modules/
+dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Data / generated outputs
+data/raw/*
+data/processed/*
+results/
+*.tif
+*.tiff
+
+# Keep folder structure
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+
+# =========================
+# LOGS
+# =========================
+*.log
+

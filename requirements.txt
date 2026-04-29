@@ -1,0 +1,45 @@
+# =========================
+# CORE API
+# =========================
+fastapi
+uvicorn[standard]
+pydantic
+python-dotenv
+
+# =========================
+# PRODUCTION SERVER
+# =========================
+gunicorn
+
+# =========================
+# NUMERICAL + DATA
+# =========================
+numpy<2.0.0
+pandas
+
+# =========================
+# IMAGE + VISUALIZATION
+# =========================
+matplotlib
+Pillow
+
+# =========================
+# GEOSPATIAL / SATELLITE
+# =========================
+rasterio==1.3.10
+pystac-client
+planetary-computer
+
+# Required for STAC + planetary computer ecosystem
+requests
+urllib3
+
+# =========================
+# PERFORMANCE / UTIL
+# =========================
+cachetools
+
+# =========================
+# COMPATIBILITY (IMPORTANT)
+# =========================
+typing-extensions
