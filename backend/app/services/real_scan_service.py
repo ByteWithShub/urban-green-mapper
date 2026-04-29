@@ -132,9 +132,8 @@ def search_scene(city: str):
     catalog = Client.open("https://planetarycomputer.microsoft.com/api/stac/v1")
 
     search_configs = [
-        ("2024-07-01/2024-10-31", 30),
-        ("2024-05-01/2024-11-30", 45),
-        ("2023-05-01/2024-11-30", 65),
+    ("2024-07-01/2024-09-30", 35),
+    ("2024-06-01/2024-10-31", 50),
     ]
 
     candidates = []
@@ -145,7 +144,7 @@ def search_scene(city: str):
             bbox=bbox,
             datetime=date_range,
             query={"eo:cloud_cover": {"lt": cloud_limit}},
-            limit=40,
+            limit=10,
         )
 
         items = list(search.items())
