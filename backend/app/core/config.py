@@ -9,7 +9,7 @@ class Settings(BaseModel):
     ALLOWED_ORIGINS: list[str] = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
-        "*",
+        "https://urban-green-mapper.vercel.app/",
     ]
 
 
