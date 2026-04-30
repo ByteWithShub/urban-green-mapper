@@ -148,7 +148,8 @@ async def search_scene(lat: float, lon: float) -> dict:
 
 @lru_cache(maxsize=32)
 def get_cached_scene(city: str):
-    return search_scene(city)
+    lat, lon = CITY_CENTER[city]
+    return search_scene(lat, lon)
 
 
 def read_band(asset_href: str, bbox: list[float], target_size: int = 64) -> np.ndarray:
