@@ -52,10 +52,7 @@ export default function App() {
   );
 
   async function handleScan() {
-    alert("API URL: " + import.meta.env.VITE_API_BASE_URL); // ADD THIS
-  setLoading(true);
-
-  async function handleScan() {
+    console.log("API BASE URL:", import.meta.env.VITE_API_BASE_URL);
     setLoading(true);
 
     try {
@@ -116,11 +113,13 @@ export default function App() {
         <MetricCard icon={Activity} label="Temperature" value={scanData?.metrics?.temperature_c == null ? "Unavailable" : `${scanData.metrics.temperature_c}°C`} tone="blue" />
         <MetricCard icon={ShieldCheck} label="Reliability" value={scanData ? `${scanData.metrics.reliability_score}/100` : "Awaiting scan"} tone="violet" />
       </section>
+
       <OrbitalReceipt scanData={scanData} />
       <ProductContextPanel scanData={scanData} userType={userType} />
       <ImprovementPanel scanData={scanData} />
       <ChatPanel scanData={scanData} userType={userType} city={city} />
       <AudienceModePanel userType={userType} scanData={scanData} />
+
       <section className="section">
         <CityComparisonPanel />
       </section>
@@ -130,5 +129,4 @@ export default function App() {
       </section>
     </main>
   );
-}
 }
