@@ -54,7 +54,7 @@ export default function App() {
   async function handleScan() {
     alert("API URL: " + import.meta.env.VITE_API_BASE_URL); // ADD THIS
   setLoading(true);
-  
+
   async function handleScan() {
     setLoading(true);
 
@@ -130,4 +130,5 @@ export default function App() {
       </section>
     </main>
   );
+}
 }
