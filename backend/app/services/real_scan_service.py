@@ -99,51 +99,40 @@ def get_weather(city: str):
         }
 
 
-async def search_scene(lat: float, lon: float) -> dict:
-    """Search for a Sentinel-2 scene using direct STAC API call with tight timeout."""
-    
-    # Small bbox (~5km) instead of full city — less data, faster response
+def search_scene(lat: float, lon: float):
+    import requests
+
     delta = 0.05
     bbox = [lon - delta, lat - delta, lon + delta, lat + delta]
-    
-    # Search last 60 days for better cloud-free coverage
+
     end_date = datetime.utcnow()
     start_date = end_date - timedelta(days=60)
-    
+
     params = {
         "collections": ["sentinel-2-l2a"],
         "bbox": bbox,
         "datetime": f"{start_date.strftime('%Y-%m-%dT%H:%M:%SZ')}/{end_date.strftime('%Y-%m-%dT%H:%M:%SZ')}",
         "query": {"eo:cloud_cover": {"lt": 20}},
         "sortby": [{"field": "eo:cloud_cover", "direction": "asc"}],
-        "limit": 3  # Only fetch top 3 — we use just the first
+        "limit": 3,
     }
-    
-    # Direct HTTP call with strict 20s timeout — avoids pystac_client's hanging open connections
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        response = await client.post(
-            "https://planetarycomputer.microsoft.com/api/stac/v1/search",
-            json=params,
-            headers={"Content-Type": "application/json"}
-        )
-        response.raise_for_status()
-        data = response.json()
-    
-    features = data.get("features", [])
+
+    response = requests.post(
+        "https://planetarycomputer.microsoft.com/api/stac/v1/search",
+        json=params,
+        headers={"Content-Type": "application/json"},
+        timeout=25,
+    )
+    response.raise_for_status()
+    features = response.json().get("features", [])
+
     if not features:
-        raise ValueError(f"No Sentinel-2 scenes found for bbox {bbox}")
-    
-    item = features[0]
-    
-    # Sign the item assets via Planetary Computer token endpoint
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        sign_response = await client.get(
-            f"https://planetarycomputer.microsoft.com/api/sas/v1/sign",
-            params={"href": item["assets"]["B04"]["href"]}  # probe sign with one asset
-        )
-        # If signing fails, fall through — some assets are public
-    
-    return item
+        raise ValueError(f"No Sentinel-2 scenes found for lat={lat}, lon={lon}")
+
+    # Convert raw feature dict to a signed pystac Item
+    import pystac
+    item = pystac.Item.from_dict(features[0])
+    return planetary_computer.sign(item)
 
 
 @lru_cache(maxsize=32)
