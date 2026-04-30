@@ -7,7 +7,8 @@ import asyncio
 import httpx
 from datetime import datetime, timedelta 
 import matplotlib
-
+from PIL import Image
+import numpy as np
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
@@ -253,8 +254,15 @@ def run_real_scan(city: str, user_type: str, layer_focus: str) -> ScanResponse:
     green = read_band(scene.assets["B03"].href, bbox=bbox)
     red = read_band(scene.assets["B04"].href, bbox=bbox)
     nir = read_band(scene.assets["B08"].href, bbox=bbox)
-    swir = read_band(scene.assets["B11"].href, bbox=bbox, target_shape=red.shape)
+    swir = read_band(scene.assets["B11"].href, bbox=bbox)
 
+    # Resize swir to match red shape
+    swir = np.array(
+        Image.fromarray(swir).resize(
+            (red.shape[1], red.shape[0]), Image.BILINEAR
+        )
+    )
+    
     valid_mask = (red > 0) & (green > 0) & (blue > 0) & (nir > 0)
 
     rgb = np.dstack(
