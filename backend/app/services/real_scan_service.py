@@ -132,11 +132,10 @@ def search_scene(city: str):
     catalog = Client.open("https://planetarycomputer.microsoft.com/api/stac/v1")
 
     search_configs = [
-    ("2024-07-01/2024-09-30", 35),
-    ("2024-06-01/2024-10-31", 50),
+        ("2024-08-01/2024-09-15", 40),
+        ("2024-07-01/2024-10-15", 55),
+        ("2023-07-01/2023-10-15", 65),
     ]
-
-    candidates = []
 
     for date_range, cloud_limit in search_configs:
         search = catalog.search(
@@ -144,33 +143,24 @@ def search_scene(city: str):
             bbox=bbox,
             datetime=date_range,
             query={"eo:cloud_cover": {"lt": cloud_limit}},
-            limit=10,
+            limit=5,
+            max_items=5,
         )
 
         items = list(search.items())
 
-        for item in items:
-            valid_ratio = get_valid_pixel_ratio(item, bbox)
+        if items:
+            best_item = sorted(
+                items,
+                key=lambda item: (
+                    item.properties.get("eo:cloud_cover", 999),
+                    -item.datetime.timestamp(),
+                ),
+            )[0]
 
-            if valid_ratio >= 0.75:
-                candidates.append((item, valid_ratio))
+            return planetary_computer.sign(best_item)
 
-        if candidates:
-            break
-
-    if not candidates:
-        raise ValueError(f"No clean Sentinel-2 scene found for {city}")
-
-    best_item, _ = sorted(
-        candidates,
-        key=lambda pair: (
-            pair[0].properties.get("eo:cloud_cover", 999),
-            -pair[1],
-            -pair[0].datetime.timestamp(),
-        ),
-    )[0]
-
-    return planetary_computer.sign(best_item)
+    raise ValueError(f"No Sentinel-2 scene found for {city}")
 
 
 @lru_cache(maxsize=32)
