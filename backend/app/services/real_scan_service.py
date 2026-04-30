@@ -1,36 +1,24 @@
 import base64
 import json
+from datetime import datetime, timedelta
 from functools import lru_cache
 from io import BytesIO
 from urllib.request import urlopen
-import asyncio
-import httpx
-from datetime import datetime, timedelta 
+
 import matplotlib
-from PIL import Image
-import numpy as np
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import numpy as np
 import planetary_computer
+import pystac
 import rasterio
-from pystac_client import Client
+import requests
+from PIL import Image
+from rasterio.crs import CRS
 from rasterio.enums import Resampling
 from rasterio.warp import transform_bounds
 from rasterio.windows import from_bounds
-
-from app.schemas.scan import (
-    LayerImages,
-    ScanMetadata,
-    ScanMetrics,
-    ScanResponse,
-)
-from app.services.insight_service import (
-    generate_brief,
-    generate_kid_summary,
-    generate_research_notes,
-)
 
 
 CITY_CENTER = {
@@ -142,7 +130,7 @@ def get_cached_scene(city: str):
     return search_scene(lat, lon)
 
 
-def read_band(asset_href: str, bbox: list[float], target_size: int = 64) -> np.ndarray:
+def read_band(asset_href: str, bbox: list[float], target_size: int = 512) -> np.ndarray:
     """
     Read a single band from a COG asset, windowed to bbox, resampled to target_size.
     Fast: uses overview levels + window read — never reads the full scene.
@@ -178,7 +166,7 @@ def read_band(asset_href: str, bbox: list[float], target_size: int = 64) -> np.n
                 1,
                 window=window,
                 out_shape=(target_size, target_size),
-                resampling=Resampling.nearest  # Fastest resampling
+                resampling=Resampling.bilinear  # Fastest resampling
             )
     
     return data.astype(np.float32)
@@ -222,7 +210,7 @@ def classify_ndvi(ndvi):
 
 
 def encode_image(arr=None, rgb=None, cmap="viridis", vmin=None, vmax=None):
-    fig, ax = plt.subplots(figsize=(9, 6), dpi=150)
+    fig, ax = plt.subplots(figsize=(10, 10), dpi=150)
 
     if rgb is not None:
         ax.imshow(rgb)
