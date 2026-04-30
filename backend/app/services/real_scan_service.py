@@ -30,23 +30,6 @@ from app.services.insight_service import (
 )
 
 
-CITY_BBOX = {
-    "Ottawa": (-76.15, 45.15, -75.30, 45.65),
-    "Victoria": (-123.75, 48.20, -123.10, 48.70),
-    "Edmonton": (-114.00, 53.25, -113.05, 53.85),
-    "Regina": (-105.00, 50.25, -104.25, 50.70),
-    "Winnipeg": (-97.65, 49.60, -96.55, 50.20),
-    "Toronto": (-79.95, 43.35, -78.95, 44.05),
-    "Quebec City": (-71.85, 46.55, -70.85, 47.10),
-    "Fredericton": (-67.05, 45.75, -66.35, 46.20),
-    "Halifax": (-64.00, 44.35, -63.20, 44.95),
-    "Charlottetown": (-63.45, 46.05, -62.85, 46.45),
-    "St. John's": (-53.10, 47.35, -52.40, 47.80),
-    "Whitehorse": (-135.55, 60.45, -134.65, 61.00),
-    "Yellowknife": (-114.85, 62.25, -113.95, 62.75),
-    "Iqaluit": (-69.00, 63.55, -68.15, 64.00),
-}
-
 CITY_CENTER = {
     "Ottawa": (45.4215, -75.6972),
     "Victoria": (48.4284, -123.3656),
@@ -62,6 +45,26 @@ CITY_CENTER = {
     "Whitehorse": (60.7212, -135.0568),
     "Yellowknife": (62.4540, -114.3718),
     "Iqaluit": (63.7467, -68.5170),
+}
+
+
+def make_city_bbox(city: str, half_size: float = 0.08):
+    if city not in CITY_CENTER:
+        raise ValueError(f"Unsupported city: {city}")
+
+    lat, lon = CITY_CENTER[city]
+
+    return (
+        lon - half_size,
+        lat - half_size,
+        lon + half_size,
+        lat + half_size,
+    )
+
+
+CITY_BBOX = {
+    city: make_city_bbox(city)
+    for city in CITY_CENTER
 }
 
 
@@ -85,6 +88,7 @@ def get_weather(city: str):
                 "humidity_pct": current.get("relative_humidity_2m"),
                 "wind_kmh": current.get("wind_speed_10m"),
             }
+
     except Exception:
         return {
             "temperature_c": None,
@@ -93,63 +97,37 @@ def get_weather(city: str):
         }
 
 
-def get_valid_pixel_ratio(item, bbox):
-    try:
-        signed_item = planetary_computer.sign(item)
-        red_url = signed_item.assets["B04"].href
-
-        with rasterio.open(red_url) as src:
-            projected_bounds = transform_bounds(
-                "EPSG:4326",
-                src.crs,
-                *bbox,
-                densify_pts=21,
-            )
-
-            window = from_bounds(*projected_bounds, transform=src.transform)
-            window = window.round_offsets().round_lengths()
-
-            sample = src.read(
-                1,
-                window=window,
-                out_shape=(160, 160),
-                resampling=Resampling.bilinear,
-                boundless=True,
-                fill_value=0,
-            )
-
-            return float(np.mean(sample > 0))
-
-    except Exception:
-        return 0.0
-
-
 def search_scene(city: str):
     if city not in CITY_BBOX:
         raise ValueError(f"Unsupported city: {city}")
 
     bbox = CITY_BBOX[city]
+
     catalog = Client.open("https://planetarycomputer.microsoft.com/api/stac/v1")
 
     search_configs = [
-        ("2024-08-01/2024-09-15", 40),
-        ("2024-07-01/2024-10-15", 55),
-        ("2023-07-01/2023-10-15", 65),
+        ("2024-08-01/2024-09-30", 45),
+        ("2024-07-01/2024-10-31", 60),
+        ("2023-07-01/2023-10-31", 70),
     ]
 
+    last_error = None
+
     for date_range, cloud_limit in search_configs:
-        search = catalog.search(
-            collections=["sentinel-2-l2a"],
-            bbox=bbox,
-            datetime=date_range,
-            query={"eo:cloud_cover": {"lt": cloud_limit}},
-            limit=5,
-            max_items=5,
-        )
+        try:
+            search = catalog.search(
+                collections=["sentinel-2-l2a"],
+                bbox=bbox,
+                datetime=date_range,
+                query={"eo:cloud_cover": {"lt": cloud_limit}},
+                limit=5,
+            )
 
-        items = list(search.items())
+            items = list(search.items())
 
-        if items:
+            if not items:
+                continue
+
             best_item = sorted(
                 items,
                 key=lambda item: (
@@ -160,7 +138,13 @@ def search_scene(city: str):
 
             return planetary_computer.sign(best_item)
 
-    raise ValueError(f"No Sentinel-2 scene found for {city}")
+        except Exception as error:
+            last_error = error
+            print(f"Scene search failed for {city}: {error}")
+
+    raise ValueError(
+        f"No Sentinel-2 scene found for {city}. Last error: {last_error}"
+    )
 
 
 @lru_cache(maxsize=32)
@@ -168,33 +152,33 @@ def get_cached_scene(city: str):
     return search_scene(city)
 
 
-def read_band(url: str, bbox, scale_factor: int = 3, target_shape=None):
-    with rasterio.open(url) as src:
-        projected_bounds = transform_bounds(
-            "EPSG:4326",
-            src.crs,
-            *bbox,
-            densify_pts=21,
-        )
-
-        window = from_bounds(*projected_bounds, transform=src.transform)
-        window = window.round_offsets().round_lengths()
-
-        if target_shape is None:
-            out_shape = (
-                max(300, int(window.height // scale_factor)),
-                max(300, int(window.width // scale_factor)),
+def read_band(url: str, bbox, target_shape=(512, 512)):
+    with rasterio.Env(
+        GDAL_HTTP_TIMEOUT="20",
+        GDAL_HTTP_CONNECTTIMEOUT="10",
+        GDAL_HTTP_MAX_RETRY="2",
+        GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR",
+        CPL_VSIL_CURL_ALLOWED_EXTENSIONS=".tif,.TIF",
+    ):
+        with rasterio.open(url) as src:
+            projected_bounds = transform_bounds(
+                "EPSG:4326",
+                src.crs,
+                *bbox,
+                densify_pts=21,
             )
-        else:
-            out_shape = target_shape
 
-        return src.read(
-            1,
-            window=window,
-            out_shape=out_shape,
-            resampling=Resampling.bilinear,
-            boundless=False,
-        ).astype("float32")
+            window = from_bounds(*projected_bounds, transform=src.transform)
+            window = window.round_offsets().round_lengths()
+
+            return src.read(
+                1,
+                window=window,
+                out_shape=target_shape,
+                resampling=Resampling.bilinear,
+                boundless=True,
+                fill_value=0,
+            ).astype("float32")
 
 
 def normalize_band(band):
@@ -352,7 +336,7 @@ def run_real_scan(city: str, user_type: str, layer_focus: str) -> ScanResponse:
             cloud_cover=round(scene_cloud_cover, 2),
             date=str(scene.datetime),
             satellite="Sentinel-2 L2A",
-            resolution="10m / 20m bands cropped to city extent",
+            resolution="Sentinel-2 bands rendered at 512px production crop",
             mode=layer_focus,
         ),
         brief=generate_brief(

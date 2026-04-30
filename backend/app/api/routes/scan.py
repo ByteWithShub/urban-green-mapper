@@ -1,15 +1,10 @@
 from functools import lru_cache
+import traceback
 
 from fastapi import APIRouter, HTTPException
 
 from app.schemas.scan import ScanRequest, ScanResponse
 from app.services.real_scan_service import run_real_scan
-
-try:
-    from app.services.mock_scan_service import run_mock_scan
-except Exception:
-    run_mock_scan = None
-
 
 router = APIRouter()
 
@@ -33,16 +28,10 @@ def scan_city(payload: ScanRequest):
         )
 
     except Exception as error:
-        print(f"REAL SCAN FAILED: {error}")
-
-        if run_mock_scan is not None:
-            return run_mock_scan(
-                city=payload.city,
-                user_type=payload.user_type,
-                layer_focus=payload.layer_focus,
-            )
+        print("EARTHLENS SCAN ERROR")
+        print(traceback.format_exc())
 
         raise HTTPException(
             status_code=500,
-            detail=f"EarthLens scan failed: {str(error)}",
+            detail=f"EarthLens real satellite scan failed: {str(error)}",
         )
