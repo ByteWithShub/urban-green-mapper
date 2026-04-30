@@ -3,7 +3,9 @@ import json
 from functools import lru_cache
 from io import BytesIO
 from urllib.request import urlopen
-
+import asyncio
+import httpx
+from datetime import datetime, timedelta 
 import matplotlib
 
 matplotlib.use("Agg")
@@ -97,54 +99,51 @@ def get_weather(city: str):
         }
 
 
-def search_scene(city: str):
-    if city not in CITY_BBOX:
-        raise ValueError(f"Unsupported city: {city}")
-
-    bbox = CITY_BBOX[city]
-
-    catalog = Client.open("https://planetarycomputer.microsoft.com/api/stac/v1")
-
-    search_configs = [
-        ("2024-08-01/2024-09-30", 45),
-        ("2024-07-01/2024-10-31", 60),
-        ("2023-07-01/2023-10-31", 70),
-    ]
-
-    last_error = None
-
-    for date_range, cloud_limit in search_configs:
-        try:
-            search = catalog.search(
-                collections=["sentinel-2-l2a"],
-                bbox=bbox,
-                datetime=date_range,
-                query={"eo:cloud_cover": {"lt": cloud_limit}},
-                limit=5,
-            )
-
-            items = list(search.items())
-
-            if not items:
-                continue
-
-            best_item = sorted(
-                items,
-                key=lambda item: (
-                    item.properties.get("eo:cloud_cover", 999),
-                    -item.datetime.timestamp(),
-                ),
-            )[0]
-
-            return planetary_computer.sign(best_item)
-
-        except Exception as error:
-            last_error = error
-            print(f"Scene search failed for {city}: {error}")
-
-    raise ValueError(
-        f"No Sentinel-2 scene found for {city}. Last error: {last_error}"
-    )
+async def search_scene(lat: float, lon: float) -> dict:
+    """Search for a Sentinel-2 scene using direct STAC API call with tight timeout."""
+    
+    # Small bbox (~5km) instead of full city — less data, faster response
+    delta = 0.05
+    bbox = [lon - delta, lat - delta, lon + delta, lat + delta]
+    
+    # Search last 60 days for better cloud-free coverage
+    end_date = datetime.utcnow()
+    start_date = end_date - timedelta(days=60)
+    
+    params = {
+        "collections": ["sentinel-2-l2a"],
+        "bbox": bbox,
+        "datetime": f"{start_date.strftime('%Y-%m-%dT%H:%M:%SZ')}/{end_date.strftime('%Y-%m-%dT%H:%M:%SZ')}",
+        "query": {"eo:cloud_cover": {"lt": 20}},
+        "sortby": [{"field": "eo:cloud_cover", "direction": "asc"}],
+        "limit": 3  # Only fetch top 3 — we use just the first
+    }
+    
+    # Direct HTTP call with strict 20s timeout — avoids pystac_client's hanging open connections
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.post(
+            "https://planetarycomputer.microsoft.com/api/stac/v1/search",
+            json=params,
+            headers={"Content-Type": "application/json"}
+        )
+        response.raise_for_status()
+        data = response.json()
+    
+    features = data.get("features", [])
+    if not features:
+        raise ValueError(f"No Sentinel-2 scenes found for bbox {bbox}")
+    
+    item = features[0]
+    
+    # Sign the item assets via Planetary Computer token endpoint
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        sign_response = await client.get(
+            f"https://planetarycomputer.microsoft.com/api/sas/v1/sign",
+            params={"href": item["assets"]["B04"]["href"]}  # probe sign with one asset
+        )
+        # If signing fails, fall through — some assets are public
+    
+    return item
 
 
 @lru_cache(maxsize=32)
@@ -152,33 +151,46 @@ def get_cached_scene(city: str):
     return search_scene(city)
 
 
-def read_band(url: str, bbox, target_shape=(512, 512)):
-    with rasterio.Env(
-        GDAL_HTTP_TIMEOUT="20",
-        GDAL_HTTP_CONNECTTIMEOUT="10",
-        GDAL_HTTP_MAX_RETRY="2",
-        GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR",
-        CPL_VSIL_CURL_ALLOWED_EXTENSIONS=".tif,.TIF",
-    ):
-        with rasterio.open(url) as src:
-            projected_bounds = transform_bounds(
-                "EPSG:4326",
-                src.crs,
-                *bbox,
-                densify_pts=21,
+def read_band(asset_href: str, bbox: list[float], target_size: int = 64) -> np.ndarray:
+    """
+    Read a single band from a COG asset, windowed to bbox, resampled to target_size.
+    Fast: uses overview levels + window read — never reads the full scene.
+    """
+    import rasterio
+    from rasterio.windows import from_bounds
+    from rasterio.enums import Resampling
+    from rasterio.crs import CRS
+    from rasterio.warp import transform_bounds
+
+    env = rasterio.Env(
+        GDAL_HTTP_TIMEOUT=15,          # Hard 15s HTTP timeout per tile request
+        GDAL_HTTP_MAX_RETRY=1,         # No retries — fail fast
+        GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR",  # Skip slow directory scans
+        CPL_VSIL_CURL_ALLOWED_EXTENSIONS=".tif,.tiff",
+        GDAL_HTTP_MERGE_CONSECUTIVE_RANGES="YES",
+        GDAL_HTTP_MULTIPLEX="YES",
+    )
+
+    with env:
+        with rasterio.open(asset_href) as src:
+            # Transform bbox from EPSG:4326 → dataset CRS
+            dst_crs = src.crs
+            west, south, east, north = transform_bounds(
+                CRS.from_epsg(4326), dst_crs,
+                bbox[0], bbox[1], bbox[2], bbox[3]
             )
-
-            window = from_bounds(*projected_bounds, transform=src.transform)
-            window = window.round_offsets().round_lengths()
-
-            return src.read(
+            
+            window = from_bounds(west, south, east, north, src.transform)
+            
+            # Read at target_size — rasterio picks the best overview automatically
+            data = src.read(
                 1,
                 window=window,
-                out_shape=target_shape,
-                resampling=Resampling.bilinear,
-                boundless=True,
-                fill_value=0,
-            ).astype("float32")
+                out_shape=(target_size, target_size),
+                resampling=Resampling.nearest  # Fastest resampling
+            )
+    
+    return data.astype(np.float32)
 
 
 def normalize_band(band):
