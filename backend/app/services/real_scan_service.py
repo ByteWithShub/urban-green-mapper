@@ -144,6 +144,10 @@ def search_scene(lat: float, lon: float):
     )
 
 
+@lru_cache(maxsize=32)
+def get_cached_scene(city: str):
+    lat, lon = CITY_CENTER[city]
+    return search_scene(lat, lon)
 # ---------------------------------------------------------------------------
 # Band reader  (windowed COG read — never pulls the whole scene)
 # ---------------------------------------------------------------------------
