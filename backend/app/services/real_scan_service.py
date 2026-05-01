@@ -131,7 +131,7 @@ def search_scene(lat: float, lon: float):
                 "https://planetarycomputer.microsoft.com/api/stac/v1/search",
                 json=params,
                 headers={"Content-Type": "application/json"},
-                timeout=25,
+                timeout=60,
             )
             resp.raise_for_status()
             features = resp.json().get("features", [])
