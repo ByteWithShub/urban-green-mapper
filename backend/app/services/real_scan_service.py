@@ -97,22 +97,18 @@ def get_weather(city: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def search_scene(lat: float, lon: float):
-    """
-    Query Planetary Computer STAC for the best recent, low-cloud Sentinel-2
-    scene centred on (lat, lon).  Uses a small 0.10° bbox so the API responds
-    quickly.  Falls back to a wider 60-day / 45 % cloud window if needed.
-    """
-    delta = 0.05  # ~5 km radius
+    delta = 0.05
     bbox  = [lon - delta, lat - delta, lon + delta, lat + delta]
 
     search_configs = [
-        (30,  20),   # last 30 days, <20 % cloud
-        (60,  35),   # last 60 days, <35 % cloud
-        (120, 60),   # last 120 days, <60 % cloud
+        ("https://planetarycomputer.microsoft.com/api/stac/v1/search", 30,  20,  True),
+        ("https://planetarycomputer.microsoft.com/api/stac/v1/search", 60,  35,  True),
+        ("https://earth-search.aws.element84.com/v1/search",           60,  35,  False),
+        ("https://earth-search.aws.element84.com/v1/search",           120, 60,  False),
     ]
 
     last_exc = None
-    for days, cloud_limit in search_configs:
+    for endpoint, days, cloud_limit, sign_item in search_configs:
         try:
             end_dt   = datetime.utcnow()
             start_dt = end_dt - timedelta(days=days)
@@ -128,7 +124,7 @@ def search_scene(lat: float, lon: float):
                 "limit":   5,
             }
             resp = requests.post(
-                "https://planetarycomputer.microsoft.com/api/stac/v1/search",
+                endpoint,
                 json=params,
                 headers={"Content-Type": "application/json"},
                 timeout=60,
@@ -137,21 +133,15 @@ def search_scene(lat: float, lon: float):
             features = resp.json().get("features", [])
             if features:
                 item = pystac.Item.from_dict(features[0])
-                return planetary_computer.sign(item)
+                return planetary_computer.sign(item) if sign_item else item
         except Exception as exc:
             last_exc = exc
-            print(f"[search_scene] attempt failed (days={days}, cloud<{cloud_limit}%): {exc}")
+            print(f"[search_scene] attempt failed (endpoint={endpoint}, days={days}, cloud<{cloud_limit}%): {exc}")
 
     raise ValueError(
         f"No Sentinel-2 scene found for lat={lat:.4f}, lon={lon:.4f}. "
         f"Last error: {last_exc}"
     )
-
-
-@lru_cache(maxsize=32)
-def get_cached_scene(city: str):
-    lat, lon = CITY_CENTER[city]
-    return search_scene(lat, lon)
 
 
 # ---------------------------------------------------------------------------
